@@ -211,6 +211,25 @@ func checkPartialVersionPin(lines []string) *models.Issue {
 	return nil
 }
 
+// AnalyzeDockerfileContent analyzes a Dockerfile from raw string content
+// Used by the GitHub App which fetches file content from GitHub API
+func AnalyzeDockerfileContent(content, filePath string) models.FileResult {
+	result := models.FileResult{
+		FilePath: filePath,
+		FileType: "Dockerfile",
+	}
+
+	lines := strings.Split(content, "\n")
+	result.Issues = checkDockerfileRules(lines)
+
+	if issue := checkPartialVersionPin(lines); issue != nil {
+		result.Issues = append(result.Issues, *issue)
+	}
+
+	result.Score = calculateScore(len(result.Issues))
+	return result
+}
+
 func calculateScore(issueCount int) int {
 	score := 100
 	score -= issueCount * 10

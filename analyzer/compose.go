@@ -126,6 +126,29 @@ func checkComposeRules(compose composeFile) []models.Issue {
 	return issues
 }
 
+// AnalyzeComposeContent analyzes a docker-compose from raw string content
+// Used by the GitHub App which fetches file content from GitHub API
+func AnalyzeComposeContent(content, filePath string) models.FileResult {
+	result := models.FileResult{
+		FilePath: filePath,
+		FileType: "docker-compose",
+	}
+
+	var compose composeFile
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil {
+		result.Issues = append(result.Issues, models.Issue{
+			Severity: models.SeverityError,
+			Rule:     "INVALID_YAML",
+			Message:  "docker-compose.yml is not valid YAML",
+		})
+		return result
+	}
+
+	result.Issues = checkComposeRules(compose)
+	result.Score = calculateScore(len(result.Issues))
+	return result
+}
+
 func isSecretKey(key string) bool {
 	lower := strings.ToLower(key)
 	keywords := []string{"password", "secret", "api_key", "token", "private_key", "access_key"}
