@@ -7,11 +7,12 @@ import (
 )
 
 type Config struct {
-	GeminiAPIKey        string
-	GitHubAppID         string
-	GitHubWebhookSecret string
-	GitHubPrivateKeyPath string
-	Port                string
+	GeminiAPIKey           string
+	GitHubAppID            string
+	GitHubWebhookSecret    string
+	GitHubPrivateKeyPath   string
+	GitHubPrivateKeyBase64 string
+	Port                   string
 }
 
 func Load() *Config {
@@ -23,10 +24,11 @@ func Load() *Config {
 	}
 
 	return &Config{
-		GeminiAPIKey:         os.Getenv("GEMINI_API_KEY"),
-		GitHubAppID:          os.Getenv("GITHUB_APP_ID"),
-		GitHubWebhookSecret:  os.Getenv("GITHUB_WEBHOOK_SECRET"),
-		GitHubPrivateKeyPath: os.Getenv("GITHUB_PRIVATE_KEY_PATH"),
-		Port:                 port,
+		GeminiAPIKey:           os.Getenv("GEMINI_API_KEY"),
+		GitHubAppID:            os.Getenv("GITHUB_APP_ID"),
+		GitHubWebhookSecret:    os.Getenv("GITHUB_WEBHOOK_SECRET"),
+		GitHubPrivateKeyPath:   os.Getenv("GITHUB_PRIVATE_KEY_PATH"),
+		GitHubPrivateKeyBase64: os.Getenv("GITHUB_PRIVATE_KEY_BASE64"),
+		Port:                   port,
 	}
 }

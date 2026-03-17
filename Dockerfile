@@ -1,10 +1,12 @@
-FROM ubuntu
+FROM golang:1.23-alpine AS build
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
-ENV API_KEY=supersecret123
-ENV DB_PASSWORD=mypassword456
-RUN apt-get update
-RUN apt-get install -y curl
-RUN apt-get install -y vim
-RUN apt-get install -y git
+RUN go build -o devdoctor .
 
-#random test
+FROM alpine:3.19
+WORKDIR /app
+COPY --from=build /app/devdoctor .
+EXPOSE 8080
+CMD ["./devdoctor", "serve"]
