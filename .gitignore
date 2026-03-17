@@ -33,3 +33,4 @@ go.work.sum
 .env
 *.pem
 devdoctor-app.pem
+devdoctor
