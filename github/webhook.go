@@ -45,15 +45,11 @@ type WebhookHandler struct {
 
 // NewWebhookHandler creates a new webhook handler
 func NewWebhookHandler(cfg *config.Config, gitApp *GitHubApp) *WebhookHandler {
-	return &WebhookHandler{
-		cfg:    cfg,
-		gitApp: gitApp,
-	}
+	return &WebhookHandler{cfg: cfg, gitApp: gitApp}
 }
 
 // Handle is the main HTTP handler for /webhook
 func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
-	// Step 1 — Read the raw body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "could not read body", http.StatusBadRequest)
@@ -61,37 +57,30 @@ func (h *WebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Step 2 — Verify HMAC signature
-	signature := r.Header.Get("X-Hub-Signature-256")
-	if !verifySignature(h.cfg.GitHubWebhookSecret, signature, body) {
+	if !verifySignature(h.cfg.GitHubWebhookSecret, r.Header.Get("X-Hub-Signature-256"), body) {
 		log.Println("invalid webhook signature")
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
 
-	// Step 3 — Only handle pull_request events
-	eventType := r.Header.Get("X-GitHub-Event")
-	if eventType != "pull_request" {
+	if r.Header.Get("X-GitHub-Event") != "pull_request" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// Step 4 — Parse the payload
 	var event PullRequestEvent
 	if err := json.Unmarshal(body, &event); err != nil {
 		http.Error(w, "could not parse payload", http.StatusBadRequest)
 		return
 	}
 
-	// Step 5 — Only process opened or synchronized PRs
 	if event.Action != "opened" && event.Action != "synchronize" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// Step 6 — Return 200 immediately, process in background
+	// Return 200 immediately — process in background
 	w.WriteHeader(http.StatusOK)
-
 	go h.processPR(event)
 }
 
@@ -105,7 +94,7 @@ func (h *WebhookHandler) processPR(event PullRequestEvent) {
 
 	log.Printf("scanning PR #%d in %s/%s", prNumber, owner, repo)
 
-	// Step 1 — Get installation token
+	// Get installation token
 	token, err := h.gitApp.GetInstallationToken(installationID)
 	if err != nil {
 		log.Printf("could not get installation token: %v", err)
@@ -114,10 +103,10 @@ func (h *WebhookHandler) processPR(event PullRequestEvent) {
 
 	client := NewClient(token)
 
-	// Step 2 — Post pending status immediately
+	// Post pending status immediately
 	_ = client.PostCommitStatus(owner, repo, sha, "pending", "DevDoctor is scanning...")
 
-	// Step 3 — Get changed files in this PR
+	// Get changed files in this PR
 	files, err := client.GetPRFiles(owner, repo, prNumber)
 	if err != nil {
 		log.Printf("could not get PR files: %v", err)
@@ -125,7 +114,7 @@ func (h *WebhookHandler) processPR(event PullRequestEvent) {
 		return
 	}
 
-	// Step 4 — Filter only files we care about
+	// Filter only files we know how to analyze
 	relevantFiles := filterRelevantFiles(files)
 	if len(relevantFiles) == 0 {
 		log.Printf("no relevant files found in PR #%d", prNumber)
@@ -133,7 +122,7 @@ func (h *WebhookHandler) processPR(event PullRequestEvent) {
 		return
 	}
 
-	// Step 5 — Fetch content and analyze each file
+	// Fetch content and analyze each file using the registry
 	var allResults []analyzerResult
 	for _, file := range relevantFiles {
 		content, err := client.GetFileContent(file.RawURL)
@@ -142,19 +131,19 @@ func (h *WebhookHandler) processPR(event PullRequestEvent) {
 			continue
 		}
 
-		result := analyzeFile(file.Filename, content)
+		result := analyzeFileFromPR(file.Filename, []byte(content))
 		allResults = append(allResults, result)
 	}
 
-	// Step 6 — Build and post PR comment
+	// Post PR comment
 	comment := formatComment(allResults)
 	if err := client.PostComment(owner, repo, prNumber, comment); err != nil {
 		log.Printf("could not post comment: %v", err)
 		return
 	}
 
-	// Step 7 — Post final commit status
-	overallScore := calculateOverallScore(allResults)
+	// Post commit status
+	overallScore := calcOverallScore(allResults)
 	if overallScore >= 70 {
 		_ = client.PostCommitStatus(owner, repo, sha, "success",
 			fmt.Sprintf("DevDoctor — %d/100 — No critical issues", overallScore))
@@ -166,67 +155,32 @@ func (h *WebhookHandler) processPR(event PullRequestEvent) {
 	log.Printf("scan complete for PR #%d — score: %d/100", prNumber, overallScore)
 }
 
-// analyzerResult wraps a FileResult with the original filename
-type analyzerResult struct {
-	Filename   string
-	FileResult interface{}
-	Score      int
-	Issues     []issueItem
-	AISummary  string
-}
+// analyzeFileFromPR uses the registry to analyze a file from PR content
+func analyzeFileFromPR(filename string, content []byte) analyzerResult {
+	result := analyzerResult{Filename: filename, Score: 100}
 
-type issueItem struct {
-	Severity   string
-	Rule       string
-	Message    string
-	Suggestion string
-	Line       int
-}
-
-// analyzeFile routes a file to the right analyzer based on its name
-func analyzeFile(filename, content string) analyzerResult {
-	lower := strings.ToLower(filename)
-	baseName := filename
-	if idx := strings.LastIndex(filename, "/"); idx >= 0 {
-		baseName = filename[idx+1:]
-	}
-	lowerBase := strings.ToLower(baseName)
-
-	result := analyzerResult{Filename: filename}
-
-	switch {
-	case lowerBase == "dockerfile" || strings.HasPrefix(lowerBase, "dockerfile."):
-		fileResult := analyzer.AnalyzeDockerfileContent(content, filename)
-		result = mapFileResult(filename, fileResult)
-
-	case lowerBase == "docker-compose.yml" || lowerBase == "docker-compose.yaml" ||
-		strings.Contains(lower, "docker-compose"):
-		fileResult := analyzer.AnalyzeComposeContent(content, filename)
-		result = mapFileResult(filename, fileResult)
-
-	case analyzer.IsActionsFile(filename):
-		fileResult := analyzer.AnalyzeActionsContent(content, filename)
-		result = mapFileResult(filename, fileResult)
-
-	case analyzer.IsKubernetesFile(filename):
-		fileResult := analyzer.AnalyzeKubernetesContent(content, filename)
-		result = mapFileResult(filename, fileResult)
-
-	default:
-		result.Score = 100
+	analyzers := analyzer.FindAnalyzers(filename)
+	if len(analyzers) == 0 {
+		return result
 	}
 
-	return result
-}
-
-// mapFileResult converts models.FileResult into the webhook-local analyzerResult
-func mapFileResult(filename string, fileResult models.FileResult) analyzerResult {
-	result := analyzerResult{
-		Filename:  filename,
-		Score:     fileResult.Score,
-		AISummary: fileResult.AISummary,
+	ctx := models.AnalysisContext{
+		FilePath:     filename,
+		FileType:     analyzers[0].Name(),
+		Content:      content,
+		ChangedLines: map[int]bool{},
+		IsPRScan:     true,
 	}
-	for _, issue := range fileResult.Issues {
+
+	var allIssues []models.Issue
+	for _, a := range analyzers {
+		issues := a.Analyze(ctx)
+		allIssues = append(allIssues, issues...)
+	}
+
+	result.FileType = ctx.FileType
+	result.Score = calcScore(len(allIssues))
+	for _, issue := range allIssues {
 		result.Issues = append(result.Issues, issueItem{
 			Severity:   string(issue.Severity),
 			Rule:       issue.Rule,
@@ -235,34 +189,43 @@ func mapFileResult(filename string, fileResult models.FileResult) analyzerResult
 			Line:       issue.Line,
 		})
 	}
+
 	return result
 }
 
-// filterRelevantFiles keeps only files we know how to analyze
+// filterRelevantFiles keeps only files the registry can handle
 func filterRelevantFiles(files []PRFile) []PRFile {
 	var relevant []PRFile
 	for _, f := range files {
 		if f.Status == "removed" {
 			continue
 		}
-		lower := strings.ToLower(f.Filename)
-		baseName := f.Filename
-		if idx := strings.LastIndex(f.Filename, "/"); idx >= 0 {
-			baseName = f.Filename[idx+1:]
-		}
-		lowerBase := strings.ToLower(baseName)
-
-		isDockerfile := lowerBase == "dockerfile" || strings.HasPrefix(lowerBase, "dockerfile.")
-		isCompose := lowerBase == "docker-compose.yml" || lowerBase == "docker-compose.yaml" ||
-			strings.Contains(lower, "docker-compose")
-		isActions := analyzer.IsActionsFile(f.Filename)
-		isK8s := !isActions && analyzer.IsKubernetesFile(f.Filename)
-
-		if isDockerfile || isCompose || isActions || isK8s {
+		if len(analyzer.FindAnalyzers(f.Filename)) > 0 {
 			relevant = append(relevant, f)
 		}
 	}
 	return relevant
+}
+
+// calcScore is a local wrapper — avoids importing analyzer internals
+func calcScore(issueCount int) int {
+	score := 100 - (issueCount * 10)
+	if score < 0 {
+		return 0
+	}
+	return score
+}
+
+// calcOverallScore averages scores across all results
+func calcOverallScore(results []analyzerResult) int {
+	if len(results) == 0 {
+		return 100
+	}
+	total := 0
+	for _, r := range results {
+		total += r.Score
+	}
+	return total / len(results)
 }
 
 // verifySignature verifies the HMAC-SHA256 signature from GitHub
@@ -276,13 +239,37 @@ func verifySignature(secret, signature string, body []byte) bool {
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
-func calculateOverallScore(results []analyzerResult) int {
-	if len(results) == 0 {
-		return 100
+// analyzerResult wraps results for the GitHub App layer
+type analyzerResult struct {
+	Filename  string
+	FileType  string
+	Score     int
+	Issues    []issueItem
+	AISummary string
+}
+
+type issueItem struct {
+	Severity   string
+	Rule       string
+	Message    string
+	Suggestion string
+	Line       int
+}
+
+// keep existing AnalyzeDockerfileContent and AnalyzeComposeContent
+// public functions working for backward compatibility
+func analyzeFileContent(filename, content string) analyzerResult {
+	return analyzeFileFromPR(filename, []byte(content))
+}
+
+// isRelevantFile checks if a file can be analyzed
+func isRelevantFile(filename string) bool {
+	return len(analyzer.FindAnalyzers(filename)) > 0
+}
+
+func extractBaseName(filename string) string {
+	if idx := strings.LastIndex(filename, "/"); idx >= 0 {
+		return filename[idx+1:]
 	}
-	total := 0
-	for _, r := range results {
-		total += r.Score
-	}
-	return total / len(results)
+	return filename
 }

@@ -11,7 +11,7 @@ func formatComment(results []analyzerResult) string {
 		return "## 🩺 DevDoctor Report\n\nNo infrastructure files found in this PR."
 	}
 
-	overallScore := calculateOverallScore(results)
+	overallScore := calcOverallScore(results)
 
 	var sb strings.Builder
 

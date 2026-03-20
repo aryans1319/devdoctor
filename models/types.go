@@ -9,28 +9,30 @@ const (
 	SeverityInfo    Severity = "INFO"
 )
 
-// A single issue found in a file
+// Issue represents a single problem found in a file
 type Issue struct {
-	Line       int
-	Severity   Severity
-	Rule       string
-	Message    string
-	Suggestion string // AI-generated fix
+	Line        int
+	Severity    Severity
+	Rule        string
+	Message     string
+	Suggestion  string // AI-generated fix
+	InDiff      bool   // true if this line was part of the PR diff
+	DiffPosition int   // position in the diff for inline annotations
 }
 
-// Result of analyzing one file
+// FileResult is the result of analyzing one file
 type FileResult struct {
-	FilePath   string
-	FileType   string // "Dockerfile", "docker-compose", "kubernetes"
-	Issues     []Issue
-	Score      int
-	AISummary  string
+	FilePath  string
+	FileType  string
+	Issues    []Issue
+	Score     int
+	AISummary string
 }
 
-// Final output of the entire scan
+// ScanResult is the final output of a full project scan
 type ScanResult struct {
-	ProjectPath string
-	Results     []FileResult
+	ProjectPath  string
+	Results      []FileResult
 	OverallScore int
 	TotalIssues  int
 }

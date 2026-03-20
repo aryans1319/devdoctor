@@ -230,11 +230,7 @@ func AnalyzeDockerfileContent(content, filePath string) models.FileResult {
 	return result
 }
 
-func calculateScore(issueCount int) int {
-	score := 100
-	score -= issueCount * 10
-	if score < 0 {
-		return 0
-	}
-	return score
+// checkDockerignoreFromContext is used by the registry-based analyzer
+func checkDockerignoreFromContext(filePath string) *models.Issue {
+	return checkDockerignore(filePath)
 }

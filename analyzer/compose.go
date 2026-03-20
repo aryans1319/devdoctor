@@ -159,3 +159,16 @@ func isSecretKey(key string) bool {
 	}
 	return false
 }
+
+// analyzeComposeContent is used by the registry-based analyzer
+func analyzeComposeContent(data []byte) []models.Issue {
+	var compose composeFile
+	if err := yaml.Unmarshal(data, &compose); err != nil {
+		return []models.Issue{{
+			Severity: models.SeverityError,
+			Rule:     "INVALID_YAML",
+			Message:  "docker-compose.yml is not valid YAML",
+		}}
+	}
+	return checkComposeRules(compose)
+}
