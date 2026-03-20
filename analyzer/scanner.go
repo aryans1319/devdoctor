@@ -15,33 +15,39 @@ func ScanProject(projectPath string) (models.ScanResult, error) {
 		ProjectPath: projectPath,
 	}
 
-	// Walk every file and folder inside the project path
 	err := filepath.Walk(projectPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // skip files we can't read
+			return nil
 		}
 
-		// Skip hidden folders like .git, .idea, node_modules
 		if info.IsDir() && shouldSkipDir(info.Name()) {
 			return filepath.SkipDir
 		}
 
-		// Skip directories themselves, only process files
 		if info.IsDir() {
 			return nil
 		}
 
 		fileName := info.Name()
 
-		// Route each file to the right analyzer
+		// Dockerfile
 		if fileName == "Dockerfile" || strings.HasPrefix(fileName, "Dockerfile.") {
-			fileResult := analyzeDockerfile(path)
-			result.Results = append(result.Results, fileResult)
+			result.Results = append(result.Results, analyzeDockerfile(path))
 		}
 
+		// docker-compose
 		if fileName == "docker-compose.yml" || fileName == "docker-compose.yaml" {
-			fileResult := analyzeCompose(path)
-			result.Results = append(result.Results, fileResult)
+			result.Results = append(result.Results, analyzeCompose(path))
+		}
+
+		// GitHub Actions
+		if IsActionsFile(path) {
+			result.Results = append(result.Results, analyzeActions(path))
+		}
+
+		// Kubernetes — must come after Actions check since both are YAML
+		if !IsActionsFile(path) && IsKubernetesFile(path) {
+			result.Results = append(result.Results, analyzeKubernetes(path))
 		}
 
 		return nil
@@ -51,11 +57,9 @@ func ScanProject(projectPath string) (models.ScanResult, error) {
 		return result, err
 	}
 
-	// Calculate totals
 	result.TotalIssues = countTotalIssues(result.Results)
 	result.OverallScore = calculateOverallScore(result.Results)
 
-	// Get AI suggestions for all issues found
 	if result.TotalIssues > 0 {
 		result = enrichWithAI(result)
 	}

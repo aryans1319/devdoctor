@@ -13,6 +13,7 @@ import (
 
 	"github.com/aryans1319/devdoctor/analyzer"
 	"github.com/aryans1319/devdoctor/config"
+	"github.com/aryans1319/devdoctor/models"
 )
 
 // PullRequestEvent is the payload GitHub sends when a PR is opened/updated
@@ -193,36 +194,47 @@ func analyzeFile(filename, content string) analyzerResult {
 
 	result := analyzerResult{Filename: filename}
 
-	if lowerBase == "dockerfile" || strings.HasPrefix(lowerBase, "dockerfile.") {
+	switch {
+	case lowerBase == "dockerfile" || strings.HasPrefix(lowerBase, "dockerfile."):
 		fileResult := analyzer.AnalyzeDockerfileContent(content, filename)
-		result.Score = fileResult.Score
-		result.AISummary = fileResult.AISummary
-		for _, issue := range fileResult.Issues {
-			result.Issues = append(result.Issues, issueItem{
-				Severity:   string(issue.Severity),
-				Rule:       issue.Rule,
-				Message:    issue.Message,
-				Suggestion: issue.Suggestion,
-				Line:       issue.Line,
-			})
-		}
-	} else if lowerBase == "docker-compose.yml" || lowerBase == "docker-compose.yaml" || strings.Contains(lower, "docker-compose") {
+		result = mapFileResult(filename, fileResult)
+
+	case lowerBase == "docker-compose.yml" || lowerBase == "docker-compose.yaml" ||
+		strings.Contains(lower, "docker-compose"):
 		fileResult := analyzer.AnalyzeComposeContent(content, filename)
-		result.Score = fileResult.Score
-		result.AISummary = fileResult.AISummary
-		for _, issue := range fileResult.Issues {
-			result.Issues = append(result.Issues, issueItem{
-				Severity:   string(issue.Severity),
-				Rule:       issue.Rule,
-				Message:    issue.Message,
-				Suggestion: issue.Suggestion,
-				Line:       issue.Line,
-			})
-		}
-	} else {
+		result = mapFileResult(filename, fileResult)
+
+	case analyzer.IsActionsFile(filename):
+		fileResult := analyzer.AnalyzeActionsContent(content, filename)
+		result = mapFileResult(filename, fileResult)
+
+	case analyzer.IsKubernetesFile(filename):
+		fileResult := analyzer.AnalyzeKubernetesContent(content, filename)
+		result = mapFileResult(filename, fileResult)
+
+	default:
 		result.Score = 100
 	}
 
+	return result
+}
+
+// mapFileResult converts models.FileResult into the webhook-local analyzerResult
+func mapFileResult(filename string, fileResult models.FileResult) analyzerResult {
+	result := analyzerResult{
+		Filename:  filename,
+		Score:     fileResult.Score,
+		AISummary: fileResult.AISummary,
+	}
+	for _, issue := range fileResult.Issues {
+		result.Issues = append(result.Issues, issueItem{
+			Severity:   string(issue.Severity),
+			Rule:       issue.Rule,
+			Message:    issue.Message,
+			Suggestion: issue.Suggestion,
+			Line:       issue.Line,
+		})
+	}
 	return result
 }
 
@@ -240,11 +252,13 @@ func filterRelevantFiles(files []PRFile) []PRFile {
 		}
 		lowerBase := strings.ToLower(baseName)
 
-		if lowerBase == "dockerfile" ||
-			strings.HasPrefix(lowerBase, "dockerfile.") ||
-			lowerBase == "docker-compose.yml" ||
-			lowerBase == "docker-compose.yaml" ||
-			strings.Contains(lower, "docker-compose") {
+		isDockerfile := lowerBase == "dockerfile" || strings.HasPrefix(lowerBase, "dockerfile.")
+		isCompose := lowerBase == "docker-compose.yml" || lowerBase == "docker-compose.yaml" ||
+			strings.Contains(lower, "docker-compose")
+		isActions := analyzer.IsActionsFile(f.Filename)
+		isK8s := !isActions && analyzer.IsKubernetesFile(f.Filename)
+
+		if isDockerfile || isCompose || isActions || isK8s {
 			relevant = append(relevant, f)
 		}
 	}
